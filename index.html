@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>1710 NOMAD PASS Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 22px 16px;
+      background: #111714; color: #f5f2e9;
+      font-family: Arial, sans-serif;
+    }
+    .container { max-width: 480px; margin: auto; }
+    .brand { text-align: center; margin: 12px 0 24px; }
+    .brand h1 { letter-spacing: 3px; margin-bottom: 6px; }
+    .brand p { color: #b8c2b9; font-size: 13px; }
+    .panel {
+      background: #202923; padding: 18px;
+      border-radius: 16px; margin-bottom: 16px;
+    }
+    label { display: block; margin: 12px 0 7px; font-size: 13px; }
+    input {
+      width: 100%; padding: 13px; border-radius: 9px;
+      border: 1px solid #526256; background: #151d18;
+      color: white; font-size: 16px;
+    }
+    button {
+      width: 100%; padding: 14px; margin-top: 12px;
+      border: 0; border-radius: 9px; font-weight: bold;
+      font-size: 15px; cursor: pointer;
+    }
+    .primary { background: #c6a66b; color: #171b16; }
+    .secondary { background: #35463a; color: white; }
+    #reader { width: 100%; overflow: hidden; border-radius: 10px; }
+    #status {
+      margin-top: 14px; padding: 13px; border-radius: 9px;
+      background: #151d18; line-height: 1.5;
+      white-space: pre-line; font-size: 14px;
+    }
+    .hint { color: #b8c2b9; font-size: 12px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">
+      <h1>1710</h1>
+      <p>CAFÉ & SOCIETY · NOMAD PASS</p>
+    </div>
+
+    <div class="panel">
+      <label>Tên nhân viên</label>
+      <input id="staff" placeholder="Nhập tên nhân viên">
+
+      <label>Mã PIN nhân viên</label>
+      <input id="pin" type="password" placeholder="Nhập mã PIN">
+    </div>
+
+    <div class="panel">
+      <div id="reader"></div>
+      <button class="primary" id="start">BẬT CAMERA QUÉT QR</button>
+      <button class="secondary" id="stop">TẮT CAMERA</button>
+      <div id="status">Sẵn sàng quét thẻ NOMAD PASS.</div>
+    </div>
+
+    <p class="hint">
+      Vui lòng kiểm tra đúng tên nhân viên và mã PIN trước khi quét thẻ.
+    </p>
+  </div>
+
+<script>
+  let scanner = null;
+  let busy = false;
+
+  const statusBox = document.getElementById("status");
+
+  function showStatus(message) {
+    statusBox.textContent = message;
+  }
+
+  function getToken(value) {
+    try {
+      const url = new URL(value);
+      return url.searchParams.get("token") || value.trim();
+    } catch (e) {
+      return value.trim();
+    }
+  }
+
+  async function startScanner() {
+    if (scanner) return;
+
+    try {
+      scanner = new Html5Qrcode("reader");
+      showStatus("Đang mở camera...");
+
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        async decodedText => {
+          if (busy) return;
+          busy = true;
+
+          const token = getToken(decodedText);
+          showStatus("Đã đọc mã QR. Đang xử lý...");
+
+          try {
+            await scanner.stop();
+            scanner = null;
+          } catch (e) {}
+
+          // Chờ tích hợp kết nối Apps Script ở bước tiếp theo.
+          showStatus("Đã quét được mã QR!\nĐang chuẩn bị kết nối hệ thống.");
+
+          window.scannedToken = token;
+        }
+      );
+
+      showStatus("Camera đã bật. Hướng mã QR vào khung quét.");
+    } catch (error) {
+      scanner = null;
+      showStatus("Không mở được camera: " + error);
+    }
+  }
+
+  async function stopScanner() {
+    if (scanner) {
+      try {
+        await scanner.stop();
+        scanner.clear();
+      } catch (e) {}
+      scanner = null;
+    }
+    busy = false;
+    showStatus("Đã tắt camera.");
+  }
+
+  document.getElementById("start").addEventListener("click", startScanner);
+  document.getElementById("stop").addEventListener("click", stopScanner);
+</script>
+</body>
+</html>
