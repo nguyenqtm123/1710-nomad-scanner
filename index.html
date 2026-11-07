@@ -70,7 +70,6 @@
       text-align: center;
       margin-top: 10px;
     }
-    iframe { display: none; }
   </style>
 </head>
 <body>
@@ -90,15 +89,15 @@
 
     <div class="panel">
       <div id="reader"></div>
-      <button class="primary" id="start" disabled>
-        ĐANG KẾT NỐI HỆ THỐNG...
+      <button class="primary" id="start">
+        BẬT CAMERA QUÉT QR
       </button>
       <button class="secondary" id="stop">TẮT CAMERA</button>
       <button class="reward" id="redeem" disabled>
         ĐỔI QUÀ THÀNH VIÊN
       </button>
-      <div id="status">Đang kết nối hệ thống NOMAD PASS...</div>
-      <div class="bridge" id="bridgeStatus">Đang khởi tạo kết nối bảo mật</div>
+      <div id="status">Đang kết nối NOMAD PASS...</div>
+      <div class="bridge" id="bridgeStatus">Đang kiểm tra kết nối API</div>
     </div>
 
     <p class="hint">
@@ -107,16 +106,10 @@
     </p>
   </div>
 
-  <iframe id="bridgeFrame" title="NOMAD PASS backend"></iframe>
-
 <script>
-  const BRIDGE_URL =
-    "https://script.google.com/macros/s/AKfycbygZRzJYmy1mesG6tMQETxKRRPUJGFm2bBhA1Zjjc3qFGtcbKrNExjX7Un9hJEO0RYyiw/exec?bridge=1";
+  const API_URL =
+    "https://1710-nomad-pass-api.nguyenqtm123.workers.dev/";
 
-  const ALLOWED_PARENT_ORIGIN =
-    "https://nguyenqtm123.github.io";
-
-  const bridgeFrame = document.getElementById("bridgeFrame");
   const startButton = document.getElementById("start");
   const redeemButton = document.getElementById("redeem");
   const statusBox = document.getElementById("status");
@@ -124,11 +117,7 @@
 
   let scanner = null;
   let busy = false;
-  let bridgeReady = false;
-  let bridgeOrigin = "";
   let activeToken = "";
-  let requestCounter = 0;
-  let pendingAction = "";
 
   function showStatus(message) {
     statusBox.textContent = message;
@@ -143,132 +132,72 @@
     }
   }
 
-  // Nhận tín hiệu từ Apps Script bridge
-  window.addEventListener("message", function(event) {
-    if (event.source !== bridgeFrame.contentWindow) return;
-
-    const data = event.data || {};
-
-    if (data.type === "BRIDGE_READY") {
-      bridgeOrigin = event.origin;
-      bridgeReady = true;
-      startButton.disabled = false;
-      startButton.textContent = "BẬT CAMERA QUÉT QR";
-      bridgeStatus.textContent = "Đã kết nối NOMAD PASS";
-      showStatus("Hệ thống sẵn sàng. Nhập thông tin nhân viên để bắt đầu.");
-      return;
-    }
-
-    if (event.origin !== bridgeOrigin) return;
-
-    if (
-      data.type === "CHECK_IN_RESULT" &&
-      pendingAction === "CHECK_IN"
-    ) {
-      pendingAction = "";
-      busy = false;
-
-      const result = data.result || {};
-      redeemButton.disabled = false;
-
-      if (result.ok) {
-        showStatus(
-          "CHECK-IN THÀNH CÔNG\n\n" +
-          (result.message || "Đã ghi nhận lượt ghé.") +
-          (result.visits !== undefined
-            ? "\nLượt ghé: " + result.visits
-            : "") +
-          (result.points !== undefined
-            ? "\nĐiểm: " + result.points
-            : "")
-        );
-      } else {
-        showStatus(
-          "CHECK-IN CHƯA THÀNH CÔNG\n\n" +
-          (result.message || "Vui lòng kiểm tra lại thông tin.")
-        );
-      }
-      return;
-    }
-
-    if (
-      data.type === "REDEEM_RESULT" &&
-      pendingAction === "REDEEM"
-    ) {
-      pendingAction = "";
-      busy = false;
-      redeemButton.disabled = false;
-
-      const result = data.result || {};
-
-      showStatus(
-        (result.ok ? "ĐỔI QUÀ THÀNH CÔNG\n\n" : "CHƯA ĐỔI ĐƯỢC QUÀ\n\n") +
-        (result.message || "Không có thông tin phản hồi.")
-      );
-
-      if (result.ok) {
-        redeemButton.disabled = true;
-        activeToken = "";
-      }
-    }
-  });
-
-  // Tạo iframe sau khi đã đăng ký listener
-  bridgeFrame.addEventListener("load", function() {
-    bridgeFrame.contentWindow.postMessage(
-      { type: "BRIDGE_PING" },
-      "*"
-    );
-  });
-
-  bridgeFrame.src = BRIDGE_URL;
-
-  function sendToBridge(data) {
-    if (!bridgeReady || !bridgeOrigin) {
-      showStatus("Chưa kết nối được hệ thống. Vui lòng tải lại trang.");
-      return false;
-    }
-
-    bridgeFrame.contentWindow.postMessage(data, bridgeOrigin);
-    return true;
-  }
-
-  function sendCheckIn(token) {
+  async function callAPI(action, token) {
     const staffName = document.getElementById("staff").value.trim();
     const pin = document.getElementById("pin").value.trim();
 
     if (!staffName || !pin) {
-      busy = false;
-      showStatus("Vui lòng nhập tên nhân viên và mã PIN.");
-      return;
+      throw new Error("Vui lòng nhập tên nhân viên và mã PIN.");
     }
 
-    pendingAction = "CHECK_IN";
-    requestCounter++;
-
-    const sent = sendToBridge({
-      type: "CHECK_IN",
-      requestId: requestCounter,
-      token: token,
-      pin: pin,
-      staffName: staffName
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        action: action,
+        token: token,
+        pin: pin,
+        staffName: staffName
+      })
     });
 
-    if (sent) {
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.message || "Lỗi kết nối API.");
+    }
+
+    return result;
+  }
+
+  async function checkIn(token) {
+    try {
       showStatus("Đã đọc QR.\nĐang xác nhận check-in...");
-    } else {
-      pendingAction = "";
+
+      const result = await callAPI("CHECK_IN", token);
+
+      showStatus(
+        (result.ok
+          ? "CHECK-IN THÀNH CÔNG\n\n"
+          : "CHECK-IN CHƯA THÀNH CÔNG\n\n") +
+        (result.message || "Không có thông tin phản hồi.") +
+        (result.visits !== undefined
+          ? "\nLượt ghé: " + result.visits
+          : "") +
+        (result.points !== undefined
+          ? "\nĐiểm: " + result.points
+          : "") +
+        (result.nextResetDate
+          ? "\nNgày kết thúc chu kỳ: " + result.nextResetDate
+          : "")
+      );
+
+      // Cho phép kiểm tra đổi quà kể cả khi check-in bị từ chối
+      // vì thành viên đã check-in trong ngày.
+      redeemButton.disabled = false;
+
+    } catch (error) {
+      showStatus("LỖI KẾT NỐI\n\n" + error.message);
+      redeemButton.disabled = true;
+    } finally {
       busy = false;
     }
   }
 
   async function startScanner() {
     if (scanner || busy) return;
-
-    if (!bridgeReady) {
-      showStatus("Hệ thống chưa kết nối. Vui lòng chờ hoặc tải lại trang.");
-      return;
-    }
 
     const staffName = document.getElementById("staff").value.trim();
     const pin = document.getElementById("pin").value.trim();
@@ -287,8 +216,8 @@
         { fps: 10, qrbox: { width: 240, height: 240 } },
         async function(decodedText) {
           if (busy) return;
-          busy = true;
 
+          busy = true;
           const token = getToken(decodedText);
 
           if (!token) {
@@ -306,12 +235,16 @@
           } catch (error) {}
 
           scanner = null;
-          sendCheckIn(token);
+          await checkIn(token);
         }
       );
 
       showStatus("Camera đã bật. Hướng mã QR vào khung quét.");
+
     } catch (error) {
+      if (scanner) {
+        try { scanner.clear(); } catch (e) {}
+      }
       scanner = null;
       showStatus("Không mở được camera: " + error);
     }
@@ -323,6 +256,7 @@
         await scanner.stop();
         scanner.clear();
       } catch (error) {}
+
       scanner = null;
     }
 
@@ -330,16 +264,8 @@
     showStatus("Đã tắt camera.");
   }
 
-  function redeemReward() {
+  async function redeemReward() {
     if (busy || !activeToken) return;
-
-    const staffName = document.getElementById("staff").value.trim();
-    const pin = document.getElementById("pin").value.trim();
-
-    if (!staffName || !pin) {
-      showStatus("Vui lòng nhập tên nhân viên và mã PIN.");
-      return;
-    }
 
     if (!window.confirm("Xác nhận đổi quà cho thành viên này?")) {
       return;
@@ -347,29 +273,56 @@
 
     busy = true;
     redeemButton.disabled = true;
-    pendingAction = "REDEEM";
-    requestCounter++;
 
-    const sent = sendToBridge({
-      type: "REDEEM",
-      requestId: requestCounter,
-      token: activeToken,
-      pin: pin,
-      staffName: staffName
-    });
-
-    if (sent) {
+    try {
       showStatus("Đang xác nhận đổi quà...");
-    } else {
-      pendingAction = "";
-      busy = false;
+
+      const result = await callAPI("REDEEM", activeToken);
+
+      showStatus(
+        (result.ok
+          ? "ĐỔI QUÀ THÀNH CÔNG\n\n"
+          : "CHƯA ĐỔI ĐƯỢC QUÀ\n\n") +
+        (result.message || "Không có thông tin phản hồi.")
+      );
+
+      if (result.ok) {
+        activeToken = "";
+      } else {
+        redeemButton.disabled = false;
+      }
+
+    } catch (error) {
+      showStatus("LỖI KẾT NỐI\n\n" + error.message);
       redeemButton.disabled = false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function testConnection() {
+    try {
+      const response = await fetch(API_URL, {
+        method: "OPTIONS"
+      });
+
+      if (response.ok) {
+        bridgeStatus.textContent = "Đã kết nối được Cloudflare Worker";
+        showStatus("Hệ thống sẵn sàng. Nhập thông tin nhân viên để bắt đầu.");
+      } else {
+        throw new Error("Worker phản hồi không hợp lệ.");
+      }
+    } catch (error) {
+      bridgeStatus.textContent = "Chưa kết nối được API";
+      showStatus("Lỗi kết nối hệ thống. Vui lòng tải lại trang.");
     }
   }
 
   startButton.addEventListener("click", startScanner);
   document.getElementById("stop").addEventListener("click", stopScanner);
   redeemButton.addEventListener("click", redeemReward);
+
+  testConnection();
 </script>
 </body>
 </html>
