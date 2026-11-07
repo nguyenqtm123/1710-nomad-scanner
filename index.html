@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -8,8 +9,10 @@
   <style>
     * { box-sizing: border-box; }
     body {
-      margin: 0; padding: 22px 16px;
-      background: #111714; color: #f5f2e9;
+      margin: 0;
+      padding: 22px 16px;
+      background: #111714;
+      color: #f5f2e9;
       font-family: Arial, sans-serif;
     }
     .container { max-width: 480px; margin: auto; }
@@ -17,29 +20,57 @@
     .brand h1 { letter-spacing: 3px; margin-bottom: 6px; }
     .brand p { color: #b8c2b9; font-size: 13px; }
     .panel {
-      background: #202923; padding: 18px;
-      border-radius: 16px; margin-bottom: 16px;
+      background: #202923;
+      padding: 18px;
+      border-radius: 16px;
+      margin-bottom: 16px;
     }
     label { display: block; margin: 12px 0 7px; font-size: 13px; }
     input {
-      width: 100%; padding: 13px; border-radius: 9px;
-      border: 1px solid #526256; background: #151d18;
-      color: white; font-size: 16px;
+      width: 100%;
+      padding: 13px;
+      border-radius: 9px;
+      border: 1px solid #526256;
+      background: #151d18;
+      color: white;
+      font-size: 16px;
     }
     button {
-      width: 100%; padding: 14px; margin-top: 12px;
-      border: 0; border-radius: 9px; font-weight: bold;
-      font-size: 15px; cursor: pointer;
+      width: 100%;
+      padding: 14px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 9px;
+      font-weight: bold;
+      font-size: 15px;
+      cursor: pointer;
     }
+    button:disabled { opacity: .4; cursor: not-allowed; }
     .primary { background: #c6a66b; color: #171b16; }
     .secondary { background: #35463a; color: white; }
+    .reward { background: #d5b99a; color: #174b49; }
     #reader { width: 100%; overflow: hidden; border-radius: 10px; }
     #status {
-      margin-top: 14px; padding: 13px; border-radius: 9px;
-      background: #151d18; line-height: 1.5;
-      white-space: pre-line; font-size: 14px;
+      margin-top: 14px;
+      padding: 13px;
+      border-radius: 9px;
+      background: #151d18;
+      line-height: 1.5;
+      white-space: pre-line;
+      font-size: 14px;
     }
-    .hint { color: #b8c2b9; font-size: 12px; line-height: 1.5; }
+    .hint {
+      color: #b8c2b9;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .bridge {
+      font-size: 11px;
+      color: #b8c2b9;
+      text-align: center;
+      margin-top: 10px;
+    }
+    iframe { display: none; }
   </style>
 </head>
 <body>
@@ -51,7 +82,7 @@
 
     <div class="panel">
       <label>Tên nhân viên</label>
-      <input id="staff" placeholder="Nhập tên nhân viên">
+      <input id="staff" placeholder="Nhập tên nhân viên" autocomplete="name">
 
       <label>Mã PIN nhân viên</label>
       <input id="pin" type="password" placeholder="Nhập mã PIN">
@@ -59,21 +90,45 @@
 
     <div class="panel">
       <div id="reader"></div>
-      <button class="primary" id="start">BẬT CAMERA QUÉT QR</button>
+      <button class="primary" id="start" disabled>
+        ĐANG KẾT NỐI HỆ THỐNG...
+      </button>
       <button class="secondary" id="stop">TẮT CAMERA</button>
-      <div id="status">Sẵn sàng quét thẻ NOMAD PASS.</div>
+      <button class="reward" id="redeem" disabled>
+        ĐỔI QUÀ THÀNH VIÊN
+      </button>
+      <div id="status">Đang kết nối hệ thống NOMAD PASS...</div>
+      <div class="bridge" id="bridgeStatus">Đang khởi tạo kết nối bảo mật</div>
     </div>
 
     <p class="hint">
-      Vui lòng kiểm tra đúng tên nhân viên và mã PIN trước khi quét thẻ.
+      Kiểm tra tên nhân viên và mã PIN trước khi quét.
+      Mỗi thành viên chỉ được ghi nhận lượt ghé một lần mỗi ngày.
     </p>
   </div>
 
+  <iframe id="bridgeFrame" title="NOMAD PASS backend"></iframe>
+
 <script>
+  const BRIDGE_URL =
+    "https://script.google.com/macros/s/AKfycbygZRzJYmy1mesG6tMQETxKRRPUJGFm2bBhA1Zjjc3qFGtcbKrNExjX7Un9hJEO0RYyiw/exec?bridge=1";
+
+  const ALLOWED_PARENT_ORIGIN =
+    "https://nguyenqtm123.github.io";
+
+  const bridgeFrame = document.getElementById("bridgeFrame");
+  const startButton = document.getElementById("start");
+  const redeemButton = document.getElementById("redeem");
+  const statusBox = document.getElementById("status");
+  const bridgeStatus = document.getElementById("bridgeStatus");
+
   let scanner = null;
   let busy = false;
-
-  const statusBox = document.getElementById("status");
+  let bridgeReady = false;
+  let bridgeOrigin = "";
+  let activeToken = "";
+  let requestCounter = 0;
+  let pendingAction = "";
 
   function showStatus(message) {
     statusBox.textContent = message;
@@ -83,13 +138,145 @@
     try {
       const url = new URL(value);
       return url.searchParams.get("token") || value.trim();
-    } catch (e) {
+    } catch (error) {
       return value.trim();
     }
   }
 
+  // Nhận tín hiệu từ Apps Script bridge
+  window.addEventListener("message", function(event) {
+    if (event.source !== bridgeFrame.contentWindow) return;
+
+    const data = event.data || {};
+
+    if (data.type === "BRIDGE_READY") {
+      bridgeOrigin = event.origin;
+      bridgeReady = true;
+      startButton.disabled = false;
+      startButton.textContent = "BẬT CAMERA QUÉT QR";
+      bridgeStatus.textContent = "Đã kết nối NOMAD PASS";
+      showStatus("Hệ thống sẵn sàng. Nhập thông tin nhân viên để bắt đầu.");
+      return;
+    }
+
+    if (event.origin !== bridgeOrigin) return;
+
+    if (
+      data.type === "CHECK_IN_RESULT" &&
+      pendingAction === "CHECK_IN"
+    ) {
+      pendingAction = "";
+      busy = false;
+
+      const result = data.result || {};
+      redeemButton.disabled = false;
+
+      if (result.ok) {
+        showStatus(
+          "CHECK-IN THÀNH CÔNG\n\n" +
+          (result.message || "Đã ghi nhận lượt ghé.") +
+          (result.visits !== undefined
+            ? "\nLượt ghé: " + result.visits
+            : "") +
+          (result.points !== undefined
+            ? "\nĐiểm: " + result.points
+            : "")
+        );
+      } else {
+        showStatus(
+          "CHECK-IN CHƯA THÀNH CÔNG\n\n" +
+          (result.message || "Vui lòng kiểm tra lại thông tin.")
+        );
+      }
+      return;
+    }
+
+    if (
+      data.type === "REDEEM_RESULT" &&
+      pendingAction === "REDEEM"
+    ) {
+      pendingAction = "";
+      busy = false;
+      redeemButton.disabled = false;
+
+      const result = data.result || {};
+
+      showStatus(
+        (result.ok ? "ĐỔI QUÀ THÀNH CÔNG\n\n" : "CHƯA ĐỔI ĐƯỢC QUÀ\n\n") +
+        (result.message || "Không có thông tin phản hồi.")
+      );
+
+      if (result.ok) {
+        redeemButton.disabled = true;
+        activeToken = "";
+      }
+    }
+  });
+
+  // Tạo iframe sau khi đã đăng ký listener
+  bridgeFrame.addEventListener("load", function() {
+    bridgeFrame.contentWindow.postMessage(
+      { type: "BRIDGE_PING" },
+      "*"
+    );
+  });
+
+  bridgeFrame.src = BRIDGE_URL;
+
+  function sendToBridge(data) {
+    if (!bridgeReady || !bridgeOrigin) {
+      showStatus("Chưa kết nối được hệ thống. Vui lòng tải lại trang.");
+      return false;
+    }
+
+    bridgeFrame.contentWindow.postMessage(data, bridgeOrigin);
+    return true;
+  }
+
+  function sendCheckIn(token) {
+    const staffName = document.getElementById("staff").value.trim();
+    const pin = document.getElementById("pin").value.trim();
+
+    if (!staffName || !pin) {
+      busy = false;
+      showStatus("Vui lòng nhập tên nhân viên và mã PIN.");
+      return;
+    }
+
+    pendingAction = "CHECK_IN";
+    requestCounter++;
+
+    const sent = sendToBridge({
+      type: "CHECK_IN",
+      requestId: requestCounter,
+      token: token,
+      pin: pin,
+      staffName: staffName
+    });
+
+    if (sent) {
+      showStatus("Đã đọc QR.\nĐang xác nhận check-in...");
+    } else {
+      pendingAction = "";
+      busy = false;
+    }
+  }
+
   async function startScanner() {
-    if (scanner) return;
+    if (scanner || busy) return;
+
+    if (!bridgeReady) {
+      showStatus("Hệ thống chưa kết nối. Vui lòng chờ hoặc tải lại trang.");
+      return;
+    }
+
+    const staffName = document.getElementById("staff").value.trim();
+    const pin = document.getElementById("pin").value.trim();
+
+    if (!staffName || !pin) {
+      showStatus("Vui lòng nhập tên nhân viên và mã PIN trước khi quét.");
+      return;
+    }
 
     try {
       scanner = new Html5Qrcode("reader");
@@ -98,22 +285,28 @@
       await scanner.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 240, height: 240 } },
-        async decodedText => {
+        async function(decodedText) {
           if (busy) return;
           busy = true;
 
           const token = getToken(decodedText);
-          showStatus("Đã đọc mã QR. Đang xử lý...");
+
+          if (!token) {
+            busy = false;
+            showStatus("Không đọc được mã thành viên.");
+            return;
+          }
+
+          activeToken = token;
+          redeemButton.disabled = true;
 
           try {
             await scanner.stop();
-            scanner = null;
-          } catch (e) {}
+            scanner.clear();
+          } catch (error) {}
 
-          // Chờ tích hợp kết nối Apps Script ở bước tiếp theo.
-          showStatus("Đã quét được mã QR!\nĐang chuẩn bị kết nối hệ thống.");
-
-          window.scannedToken = token;
+          scanner = null;
+          sendCheckIn(token);
         }
       );
 
@@ -129,15 +322,55 @@
       try {
         await scanner.stop();
         scanner.clear();
-      } catch (e) {}
+      } catch (error) {}
       scanner = null;
     }
+
     busy = false;
     showStatus("Đã tắt camera.");
   }
 
-  document.getElementById("start").addEventListener("click", startScanner);
+  function redeemReward() {
+    if (busy || !activeToken) return;
+
+    const staffName = document.getElementById("staff").value.trim();
+    const pin = document.getElementById("pin").value.trim();
+
+    if (!staffName || !pin) {
+      showStatus("Vui lòng nhập tên nhân viên và mã PIN.");
+      return;
+    }
+
+    if (!window.confirm("Xác nhận đổi quà cho thành viên này?")) {
+      return;
+    }
+
+    busy = true;
+    redeemButton.disabled = true;
+    pendingAction = "REDEEM";
+    requestCounter++;
+
+    const sent = sendToBridge({
+      type: "REDEEM",
+      requestId: requestCounter,
+      token: activeToken,
+      pin: pin,
+      staffName: staffName
+    });
+
+    if (sent) {
+      showStatus("Đang xác nhận đổi quà...");
+    } else {
+      pendingAction = "";
+      busy = false;
+      redeemButton.disabled = false;
+    }
+  }
+
+  startButton.addEventListener("click", startScanner);
   document.getElementById("stop").addEventListener("click", stopScanner);
+  redeemButton.addEventListener("click", redeemReward);
 </script>
 </body>
 </html>
+
